@@ -1,0 +1,9 @@
+Flask>=3.0,<4
+numpy>=1.24
+nibabel>=5.2
+pydicom>=2.4
+pylibjpeg>=2.0
+pylibjpeg-libjpeg>=2.1
+pylibjpeg-openjpeg>=2.3
+pypdf>=4.0
+python-docx>=1.1

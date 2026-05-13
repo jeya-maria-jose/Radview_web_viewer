@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DICOM / NIfTI Web Viewer</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <div class="brand-block">
+          <span class="signal-dot"></span>
+          <div>
+            <h1>MedVolume Nexus</h1>
+            <p>DICOM and NIfTI inspection console</p>
+          </div>
+        </div>
+
+        <div class="load-strip">
+          <label class="path-field">
+            <span>Volume path</span>
+            <input id="volumePath" spellcheck="false" placeholder="/path/to/dicom-folder or scan.nii.gz" />
+          </label>
+          <button id="loadVolumeBtn" class="primary-btn">Load Volume</button>
+          <label class="path-field">
+            <span>Segmentation mask</span>
+            <input id="segPath" spellcheck="false" placeholder="/path/to/mask.nii.gz" />
+          </label>
+          <button id="loadSegBtn" class="secondary-btn" disabled>Load Mask</button>
+        </div>
+      </header>
+
+      <section class="workspace">
+        <aside class="side-panel">
+          <section class="status-panel">
+            <h2>Dataset</h2>
+            <dl>
+              <div>
+                <dt>Status</dt>
+                <dd id="statusText">Waiting for a volume path</dd>
+              </div>
+              <div>
+                <dt>Shape</dt>
+                <dd id="shapeText">-</dd>
+              </div>
+              <div>
+                <dt>Spacing</dt>
+                <dd id="spacingText">-</dd>
+              </div>
+              <div>
+                <dt>Window</dt>
+                <dd id="windowText">-</dd>
+              </div>
+            </dl>
+          </section>
+
+          <section class="control-panel report-panel">
+            <h2>Report</h2>
+            <label class="report-loader">
+              <span>Report path</span>
+              <input id="reportPath" spellcheck="false" placeholder="/path/to/report.pdf, .docx, .txt, .dcm" />
+            </label>
+            <button id="loadReportBtn" class="secondary-btn report-button">Load Report</button>
+            <div id="reportStatus" class="report-status">No report loaded</div>
+            <div id="findingsList" class="findings-list"></div>
+            <div id="reportContent" class="report-content">Report text will appear here.</div>
+          </section>
+
+          <section class="control-panel">
+            <h2>Slice Depth</h2>
+            <label>
+              <span>Axial</span>
+              <input id="axialSlider" type="range" min="0" max="0" value="0" disabled />
+            </label>
+            <label>
+              <span>Coronal</span>
+              <input id="coronalSlider" type="range" min="0" max="0" value="0" disabled />
+            </label>
+            <label>
+              <span>Sagittal</span>
+              <input id="sagittalSlider" type="range" min="0" max="0" value="0" disabled />
+            </label>
+          </section>
+
+          <section class="control-panel">
+            <h2>Display</h2>
+            <label>
+              <span>Window low</span>
+              <input id="windowLow" type="range" min="0" max="1000" value="0" disabled />
+            </label>
+            <label>
+              <span>Window high</span>
+              <input id="windowHigh" type="range" min="0" max="1000" value="1000" disabled />
+            </label>
+            <label>
+              <span>3D density</span>
+              <input id="densitySlider" type="range" min="12000" max="120000" step="4000" value="52000" disabled />
+            </label>
+          </section>
+
+          <section class="control-panel">
+            <h2>View Orientation</h2>
+            <div class="flip-grid">
+              <div class="flip-row">
+                <span>Axial</span>
+                <label><input class="flip-toggle" data-plane="axial" data-axis="horizontal" type="checkbox" /> H</label>
+                <label><input class="flip-toggle" data-plane="axial" data-axis="vertical" type="checkbox" /> V</label>
+              </div>
+              <div class="flip-row">
+                <span>Coronal</span>
+                <label><input class="flip-toggle" data-plane="coronal" data-axis="horizontal" type="checkbox" /> H</label>
+                <label><input class="flip-toggle" data-plane="coronal" data-axis="vertical" type="checkbox" /> V</label>
+              </div>
+              <div class="flip-row">
+                <span>Sagittal</span>
+                <label><input class="flip-toggle" data-plane="sagittal" data-axis="horizontal" type="checkbox" /> H</label>
+                <label><input class="flip-toggle" data-plane="sagittal" data-axis="vertical" type="checkbox" checked /> V</label>
+              </div>
+            </div>
+          </section>
+
+          <section class="control-panel class-panel">
+            <h2>Segmentation Classes</h2>
+            <div id="classControls" class="empty-state">No mask loaded</div>
+          </section>
+        </aside>
+
+        <section class="view-grid">
+          <article class="viewport">
+            <div class="viewport-title">
+              <span>Axial</span>
+              <output id="axialIndex">-</output>
+            </div>
+            <canvas id="axialCanvas"></canvas>
+          </article>
+          <article class="viewport">
+            <div class="viewport-title">
+              <span>Coronal</span>
+              <output id="coronalIndex">-</output>
+            </div>
+            <canvas id="coronalCanvas"></canvas>
+          </article>
+          <article class="viewport">
+            <div class="viewport-title">
+              <span>Sagittal</span>
+              <output id="sagittalIndex">-</output>
+            </div>
+            <canvas id="sagittalCanvas"></canvas>
+          </article>
+          <article class="viewport">
+            <div class="viewport-title">
+              <span>3D Volume</span>
+              <output id="threeStatus">orbit + wheel</output>
+            </div>
+            <canvas id="threeCanvas"></canvas>
+          </article>
+        </section>
+      </section>
+    </main>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
