@@ -6,6 +6,8 @@ const elements = {
   loadSegBtn: document.querySelector("#loadSegBtn"),
   loadReportBtn: document.querySelector("#loadReportBtn"),
   statusText: document.querySelector("#statusText"),
+  sourceViewText: document.querySelector("#sourceViewText"),
+  currentSlicesText: document.querySelector("#currentSlicesText"),
   shapeText: document.querySelector("#shapeText"),
   spacingText: document.querySelector("#spacingText"),
   windowText: document.querySelector("#windowText"),
@@ -30,6 +32,20 @@ const elements = {
   threeCanvas: document.querySelector("#threeCanvas"),
 };
 
+const DEFAULT_FLIPS = {
+  axial: { horizontal: false, vertical: false },
+  coronal: { horizontal: false, vertical: true },
+  sagittal: { horizontal: false, vertical: true },
+};
+
+function cloneDefaultFlips() {
+  return {
+    axial: { ...DEFAULT_FLIPS.axial },
+    coronal: { ...DEFAULT_FLIPS.coronal },
+    sagittal: { ...DEFAULT_FLIPS.sagittal },
+  };
+}
+
 const state = {
   volumeMeta: null,
   volumeData: null,
@@ -37,11 +53,7 @@ const state = {
   segData: null,
   dims: [0, 0, 0],
   slices: { axial: 0, coronal: 0, sagittal: 0 },
-  flips: {
-    axial: { horizontal: false, vertical: false },
-    coronal: { horizontal: false, vertical: false },
-    sagittal: { horizontal: false, vertical: true },
-  },
+  flips: cloneDefaultFlips(),
   window: { low: 0, high: 1 },
   classSettings: new Map(),
   three: {
@@ -197,6 +209,7 @@ function configureControls(meta) {
   state.slices.sagittal = Math.floor(width / 2);
   state.window.low = meta.intensityMin;
   state.window.high = meta.intensityMax;
+  state.flips = cloneDefaultFlips();
 
   elements.axialSlider.max = String(depth - 1);
   elements.coronalSlider.max = String(height - 1);
@@ -218,7 +231,35 @@ function configureControls(meta) {
 
   elements.shapeText.textContent = `Z ${depth} / Y ${height} / X ${width}`;
   elements.spacingText.textContent = meta.spacing.map((v) => `${v.toFixed(3)} mm`).join(" / ");
+  elements.sourceViewText.textContent = describeSourceView(meta);
+  syncFlipControls();
+  updateCurrentSlicesText();
   updateWindowText();
+}
+
+function describeSourceView(meta) {
+  if (meta.viewInfo?.sourcePlane === "native") return "Native DICOM orientation";
+  if (meta.viewInfo?.sourcePlane === "nifti") return "NIfTI volume";
+  if (meta.viewInfo?.sourcePlane) {
+    const source = meta.viewInfo.sourcePlane.toUpperCase();
+    return meta.viewInfo.reoriented ? `${source} source -> standard planes` : `${source} source`;
+  }
+  return meta.kind.toUpperCase();
+}
+
+function syncFlipControls() {
+  for (const toggle of elements.flipToggles) {
+    const { plane, axis } = toggle.dataset;
+    toggle.checked = Boolean(state.flips[plane]?.[axis]);
+  }
+}
+
+function updateCurrentSlicesText() {
+  elements.currentSlicesText.textContent = [
+    `Axial ${state.slices.axial + 1}/${planeMax("axial") + 1}`,
+    `Coronal ${state.slices.coronal + 1}/${planeMax("coronal") + 1}`,
+    `Sagittal ${state.slices.sagittal + 1}/${planeMax("sagittal") + 1}`,
+  ].join(" | ");
 }
 
 function updateWindowFromSliders() {
@@ -313,6 +354,61 @@ function drawOrientedImage(ctx, image, target, plane) {
   ctx.restore();
 }
 
+function baseOrientationLabels(plane) {
+  if (plane === "axial") {
+    return { left: "R", right: "L", top: "A", bottom: "P" };
+  }
+  if (plane === "coronal") {
+    return { left: "R", right: "L", top: "I", bottom: "S" };
+  }
+  return { left: "A", right: "P", top: "I", bottom: "S" };
+}
+
+function orientationLabelsForPlane(plane) {
+  const labels = { ...baseOrientationLabels(plane) };
+  const flip = state.flips[plane];
+  if (flip.horizontal) {
+    [labels.left, labels.right] = [labels.right, labels.left];
+  }
+  if (flip.vertical) {
+    [labels.top, labels.bottom] = [labels.bottom, labels.top];
+  }
+  return labels;
+}
+
+function drawBadge(ctx, x, y, text) {
+  ctx.save();
+  ctx.font = `${Math.max(12, Math.round(Math.min(ctx.canvas.width, ctx.canvas.height) * 0.03))}px system-ui, sans-serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  const paddingX = 8;
+  const paddingY = 5;
+  const metrics = ctx.measureText(text);
+  const width = metrics.width + paddingX * 2;
+  const height = Math.max(20, Number.parseInt(ctx.font, 10) + paddingY * 2);
+  const left = x - width / 2;
+  const top = y - height / 2;
+  ctx.fillStyle = "rgba(3, 10, 14, 0.78)";
+  ctx.strokeStyle = "rgba(145, 231, 255, 0.35)";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.roundRect(left, top, width, height, 999);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = "#eef7fb";
+  ctx.fillText(text, x, y + 0.5);
+  ctx.restore();
+}
+
+function drawOrientationOverlay(ctx, target, plane) {
+  const labels = orientationLabelsForPlane(plane);
+  const margin = 18;
+  drawBadge(ctx, target.x + target.width / 2, target.y + margin, labels.top);
+  drawBadge(ctx, target.x + target.width / 2, target.y + target.height - margin, labels.bottom);
+  drawBadge(ctx, target.x + margin, target.y + target.height / 2, labels.left);
+  drawBadge(ctx, target.x + target.width - margin, target.y + target.height / 2, labels.right);
+}
+
 function drawPlane(plane, canvas, output) {
   if (!state.volumeData) return;
 
@@ -365,6 +461,7 @@ function drawPlane(plane, canvas, output) {
 
   const target = targetRectForAspect(canvas, spec.physicalWidth, spec.physicalHeight);
   drawOrientedImage(ctx, offscreen, target, plane);
+  drawOrientationOverlay(ctx, target, plane);
   output.textContent = `${spec.label + 1} / ${planeMax(plane) + 1}`;
 }
 
@@ -379,6 +476,7 @@ function renderSlices() {
   drawPlane("axial", elements.axialCanvas, elements.axialIndex);
   drawPlane("coronal", elements.coronalCanvas, elements.coronalIndex);
   drawPlane("sagittal", elements.sagittalCanvas, elements.sagittalIndex);
+  updateCurrentSlicesText();
 }
 
 function makeClassControls(segMeta) {
@@ -602,7 +700,7 @@ async function loadSegmentation() {
     return;
   }
   if (!path) {
-    setStatus("Enter a .nii or .nii.gz segmentation path.", true);
+    setStatus("Enter a .nii, .nii.gz, or .npz segmentation path.", true);
     return;
   }
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import re
 import uuid
@@ -40,6 +41,9 @@ class Volume:
     spacing: Tuple[float, float, float]
     intensity_min: float
     intensity_max: float
+    axis_permutation: Tuple[int, int, int] = (0, 1, 2)
+    axis_flips: Tuple[bool, bool, bool] = (False, False, False)
+    view_info: Dict[str, object] = field(default_factory=dict)
     segmentations: Dict[str, Segmentation] = field(default_factory=dict)
 
 
@@ -81,6 +85,15 @@ IMPORTANT_FINDING_RULES = [
 ]
 
 
+DEFAULT_LABEL_NAMES = {
+    1: "Primary tumor",
+    2: "Pathologic lymph nodes",
+    3: "Bone metastasis",
+    4: "Visceral metastasis",
+    5: "Other lesion",
+}
+
+
 class _TextHTMLParser(HTMLParser):
     def __init__(self) -> None:
         super().__init__()
@@ -102,11 +115,88 @@ def _resolve_user_path(raw_path: str) -> Path:
     if not raw_path or not raw_path.strip():
         raise ValueError("Path is required.")
 
-    expanded = os.path.expandvars(os.path.expanduser(raw_path.strip()))
-    path = Path(expanded).resolve()
-    if not path.exists():
-        raise FileNotFoundError(f"Path does not exist: {path}")
-    return path
+    cleaned = raw_path.strip()
+    if cleaned.startswith("file://"):
+        cleaned = cleaned[7:]
+
+    expanded = os.path.expandvars(os.path.expanduser(cleaned))
+
+    candidates: List[Path] = []
+
+    def add_candidate(value: str | Path) -> None:
+        path = value if isinstance(value, Path) else Path(value)
+        if path not in candidates:
+            candidates.append(path)
+
+    add_candidate(expanded)
+
+    raw_parts = Path(expanded).parts
+    if raw_parts and raw_parts[0] in {"mnt", "home", "Users", "Volumes", "private", "tmp", "var", "opt", "srv", "etc"}:
+        add_candidate(Path("/") / Path(expanded))
+
+    if expanded.startswith("/System/Volumes/Data/"):
+        add_candidate(expanded.removeprefix("/System/Volumes/Data"))
+
+    if expanded.startswith("/private/"):
+        add_candidate(expanded.removeprefix("/private"))
+
+    for candidate in candidates:
+        resolved = candidate.resolve(strict=False)
+        if resolved.exists():
+            return resolved
+
+    resolved_candidates = [str(candidate.resolve(strict=False)) for candidate in candidates]
+    hint = ""
+    if raw_parts and raw_parts[0] in {"mnt", "home", "Users", "Volumes", "private", "tmp", "var", "opt", "srv", "etc"}:
+        hint = f" Did you mean '/{expanded}'?"
+    raise FileNotFoundError(f"Path does not exist. Tried: {', '.join(resolved_candidates)}.{hint}")
+
+
+def _display_label_name(name: str) -> str:
+    cleaned = re.sub(r"\s+", " ", str(name).strip())
+    if not cleaned:
+        return ""
+    return cleaned[0].upper() + cleaned[1:]
+
+
+def _load_label_names(path: Path) -> Dict[int, str]:
+    names = dict(DEFAULT_LABEL_NAMES)
+    candidates = [
+        path.with_name("label_index.json"),
+        path.parent / "label_index.json",
+        path.parent.parent / "label_index.json",
+    ]
+
+    for candidate in candidates:
+        if not candidate.exists():
+            continue
+        try:
+            payload = json.loads(candidate.read_text())
+        except Exception:
+            continue
+
+        label_map = payload.get("label_map")
+        if isinstance(label_map, dict):
+            for label_name, label_id in label_map.items():
+                try:
+                    names[int(label_id)] = _display_label_name(label_name)
+                except (TypeError, ValueError):
+                    continue
+            return names
+
+        per_class_masks = payload.get("per_class_masks")
+        if isinstance(per_class_masks, list):
+            for item in per_class_masks:
+                try:
+                    label_id = int(item.get("label_id"))
+                except (TypeError, ValueError):
+                    continue
+                label_name = item.get("label_class")
+                if label_name:
+                    names[label_id] = _display_label_name(label_name)
+            return names
+
+    return names
 
 
 def _read_text_file(path: Path) -> str:
@@ -282,6 +372,87 @@ def _nifti_mask_to_zyx(path: Path) -> np.ndarray:
     return np.ascontiguousarray(mask)
 
 
+def _npz_mask_to_zyx(path: Path) -> np.ndarray:
+    archive = np.load(path)
+    keys = list(archive.files)
+    if not keys:
+        raise ValueError("NPZ mask archive is empty.")
+
+    if "mask" in archive:
+        raw = archive["mask"]
+    elif len(keys) == 1:
+        raw = archive[keys[0]]
+    else:
+        raise ValueError(f"NPZ mask archive must contain a 'mask' array or exactly one array, found keys: {keys}.")
+
+    if raw.ndim != 3:
+        raise ValueError(f"NPZ segmentation mask must be 3D, got shape {raw.shape}.")
+
+    mask = np.rint(np.asarray(raw)).astype(np.uint16, copy=False)
+    return np.ascontiguousarray(mask)
+
+
+def _dominant_patient_axis(vector: np.ndarray) -> Tuple[int, int, float]:
+    axis = int(np.argmax(np.abs(vector)))
+    sign = 1 if float(vector[axis]) >= 0 else -1
+    magnitude = float(abs(vector[axis]))
+    return axis, sign, magnitude
+
+
+def _apply_axis_transform(
+    array: np.ndarray,
+    permutation: Tuple[int, int, int],
+    flips: Tuple[bool, bool, bool],
+) -> np.ndarray:
+    transformed = np.transpose(array, permutation)
+    for axis, should_flip in enumerate(flips):
+        if should_flip:
+            transformed = np.flip(transformed, axis=axis)
+    return np.ascontiguousarray(transformed)
+
+
+def _canonicalize_dicom_volume(
+    volume: np.ndarray,
+    spacing: Tuple[float, float, float],
+    row_cosines: np.ndarray,
+    col_cosines: np.ndarray,
+) -> Tuple[np.ndarray, Tuple[float, float, float], Tuple[int, int, int], Tuple[bool, bool, bool], Dict[str, object]]:
+    normal = np.cross(row_cosines, col_cosines)
+    native_vectors = [normal, col_cosines, row_cosines]
+    mapping = []
+    used_axes = set()
+
+    for vector in native_vectors:
+        axis, sign, magnitude = _dominant_patient_axis(vector)
+        if magnitude < 0.75 or axis in used_axes:
+            return (
+                np.ascontiguousarray(volume),
+                spacing,
+                (0, 1, 2),
+                (False, False, False),
+                {"sourcePlane": "native", "reoriented": False},
+            )
+        used_axes.add(axis)
+        mapping.append((axis, sign))
+
+    target_axes = [2, 1, 0]
+    permutation = tuple(next(index for index, (axis, _) in enumerate(mapping) if axis == target) for target in target_axes)
+    flips = tuple(mapping[native_index][1] < 0 for native_index in permutation)
+
+    reordered = _apply_axis_transform(volume, permutation, flips)
+    native_spacings = [float(spacing[0]), float(spacing[1]), float(spacing[2])]
+    reordered_spacing = tuple(native_spacings[index] for index in permutation)
+
+    source_plane = {0: "sagittal", 1: "coronal", 2: "axial"}[mapping[0][0]]
+    return (
+        reordered,
+        reordered_spacing,
+        permutation,
+        flips,
+        {"sourcePlane": source_plane, "reoriented": True},
+    )
+
+
 def _dicom_sort_key(dataset: pydicom.Dataset) -> float:
     try:
         position = dataset.ImagePositionPatient
@@ -314,7 +485,9 @@ def _find_dicom_series(folder: Path) -> List[Path]:
     return max(series.values(), key=len)
 
 
-def _load_dicom_folder(folder: Path) -> Tuple[np.ndarray, Tuple[float, float, float]]:
+def _load_dicom_folder(
+    folder: Path,
+) -> Tuple[np.ndarray, Tuple[float, float, float], Tuple[int, int, int], Tuple[bool, bool, bool], Dict[str, object]]:
     files = _find_dicom_series(folder)
     slices = []
 
@@ -341,18 +514,28 @@ def _load_dicom_folder(folder: Path) -> Tuple[np.ndarray, Tuple[float, float, fl
     else:
         z_spacing = float(getattr(first, "SliceThickness", 1.0))
 
-    return np.ascontiguousarray(volume), (z_spacing, y_spacing, x_spacing)
+    spacing = (z_spacing, y_spacing, x_spacing)
+
+    orientation = getattr(first, "ImageOrientationPatient", None)
+    if orientation and len(orientation) >= 6:
+        row_cosines = np.array([float(v) for v in orientation[:3]], dtype=np.float64)
+        col_cosines = np.array([float(v) for v in orientation[3:6]], dtype=np.float64)
+        return _canonicalize_dicom_volume(volume, spacing, row_cosines, col_cosines)
+
+    return np.ascontiguousarray(volume), spacing, (0, 1, 2), (False, False, False), {"sourcePlane": "native", "reoriented": False}
 
 
-def _load_volume(path: Path) -> Tuple[np.ndarray, Tuple[float, float, float], str]:
+def _load_volume(
+    path: Path,
+) -> Tuple[np.ndarray, Tuple[float, float, float], str, Tuple[int, int, int], Tuple[bool, bool, bool], Dict[str, object]]:
     if path.is_dir():
-        volume, spacing = _load_dicom_folder(path)
-        return volume, spacing, "dicom"
+        volume, spacing, permutation, flips, view_info = _load_dicom_folder(path)
+        return volume, spacing, "dicom", permutation, flips, view_info
 
     lower_name = path.name.lower()
     if lower_name.endswith(".nii") or lower_name.endswith(".nii.gz"):
         volume, spacing = _nifti_to_zyx(path)
-        return volume, spacing, "nifti"
+        return volume, spacing, "nifti", (0, 1, 2), (False, False, False), {"sourcePlane": "nifti", "reoriented": False}
 
     raise ValueError("Unsupported volume path. Use a DICOM folder, .nii, or .nii.gz file.")
 
@@ -396,6 +579,7 @@ def _serialize_volume(volume: Volume) -> dict:
         "dtype": "float32",
         "intensityMin": volume.intensity_min,
         "intensityMax": volume.intensity_max,
+        "viewInfo": volume.view_info,
         "segmentations": [_serialize_segmentation(seg) for seg in volume.segmentations.values()],
     }
 
@@ -424,7 +608,7 @@ def health():
 def load_volume():
     try:
         path = _resolve_user_path(request.json.get("path", ""))
-        data, spacing, kind = _load_volume(path)
+        data, spacing, kind, axis_permutation, axis_flips, view_info = _load_volume(path)
         intensity_min, intensity_max = _robust_min_max(data)
 
         volume_id = uuid.uuid4().hex
@@ -436,6 +620,9 @@ def load_volume():
             spacing=spacing,
             intensity_min=intensity_min,
             intensity_max=intensity_max,
+            axis_permutation=axis_permutation,
+            axis_flips=axis_flips,
+            view_info=view_info,
         )
         VOLUMES[volume_id] = volume
         return jsonify(_serialize_volume(volume))
@@ -485,18 +672,23 @@ def load_segmentation(volume_id: str):
     try:
         path = _resolve_user_path(request.json.get("path", ""))
         lower_name = path.name.lower()
-        if not (lower_name.endswith(".nii") or lower_name.endswith(".nii.gz")):
-            raise ValueError("Segmentation mask must be a .nii or .nii.gz file.")
+        if lower_name.endswith(".nii") or lower_name.endswith(".nii.gz"):
+            mask = _nifti_mask_to_zyx(path)
+        elif lower_name.endswith(".npz"):
+            mask = _npz_mask_to_zyx(path)
+        else:
+            raise ValueError("Segmentation mask must be a .nii, .nii.gz, or .npz file.")
 
-        mask = _nifti_mask_to_zyx(path)
+        mask = _apply_axis_transform(mask, volume.axis_permutation, volume.axis_flips)
         if mask.shape != volume.data.shape:
             raise ValueError(f"Mask shape {mask.shape} does not match volume shape {volume.data.shape}.")
 
+        label_names = _load_label_names(path)
         labels = [int(v) for v in np.unique(mask) if int(v) != 0]
         classes = [
             {
                 "label": label,
-                "name": f"Class {label}",
+                "name": label_names.get(label, f"Class {label}"),
                 "color": _class_color(label),
                 "opacity": 0.55,
             }

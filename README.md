@@ -1,6 +1,6 @@
 # DICOM / NIfTI Web Viewer
 
-A local-first web viewer for DICOM folders, `.nii`, and `.nii.gz` files with four synchronized views:
+A local-first web viewer for DICOM folders, `.nii`, `.nii.gz`, and dataset-native `.npz` segmentation masks with four synchronized views:
 
 - Axial, sagittal, and coronal slice canvases
 - Interactive 3D volume view
@@ -43,7 +43,7 @@ Use the volume path field for either:
 - A `.nii` file
 - A `.nii.gz` file
 
-Use the segmentation field for a registered `.nii` or `.nii.gz` mask. Segmentation labels are detected from nonzero integer values and each label gets its own opacity slider.
+Use the segmentation field for a registered `.nii`, `.nii.gz`, or `.npz` mask. For `.npz`, the app uses the `mask` array when present, otherwise the only array in the archive. Segmentation labels are detected from nonzero integer values and each label gets its own opacity slider.
 
 Use the report path field for `.txt`, `.md`, `.csv`, `.json`, `.xml`, `.html`, `.rtf`, `.pdf`, `.docx`, or DICOM report files. Highlighting is rule-based and intended to help scan reports faster; it is not a diagnostic interpretation.
 

@@ -25,7 +25,7 @@
           <button id="loadVolumeBtn" class="primary-btn">Load Volume</button>
           <label class="path-field">
             <span>Segmentation mask</span>
-            <input id="segPath" spellcheck="false" placeholder="/path/to/mask.nii.gz" />
+            <input id="segPath" spellcheck="false" placeholder="/path/to/mask.nii.gz or multilabel_mask.npz" />
           </label>
           <button id="loadSegBtn" class="secondary-btn" disabled>Load Mask</button>
         </div>
@@ -39,6 +39,14 @@
               <div>
                 <dt>Status</dt>
                 <dd id="statusText">Waiting for a volume path</dd>
+              </div>
+              <div>
+                <dt>Source View</dt>
+                <dd id="sourceViewText">-</dd>
+              </div>
+              <div>
+                <dt>Current Slices</dt>
+                <dd id="currentSlicesText">-</dd>
               </div>
               <div>
                 <dt>Shape</dt>
@@ -115,7 +123,7 @@
               <div class="flip-row">
                 <span>Sagittal</span>
                 <label><input class="flip-toggle" data-plane="sagittal" data-axis="horizontal" type="checkbox" /> H</label>
-                <label><input class="flip-toggle" data-plane="sagittal" data-axis="vertical" type="checkbox" checked /> V</label>
+                <label><input class="flip-toggle" data-plane="sagittal" data-axis="vertical" type="checkbox" /> V</label>
               </div>
             </div>
           </section>
