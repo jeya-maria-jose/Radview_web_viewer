@@ -46,11 +46,26 @@ function cloneDefaultFlips() {
   };
 }
 
+const SEGMENTATION_SEVERITY = {
+  "Primary tumor": "high",
+  "Pathologic lymph nodes": "moderate",
+  "Bone metastasis": "high",
+  "Visceral metastasis": "high",
+  "Other lesion": "moderate",
+};
+
+const METASTATIC_CLASS_NAMES = new Set(["Bone metastasis", "Visceral metastasis", "Other lesion"]);
+
 const state = {
   volumeMeta: null,
   volumeData: null,
   segMeta: null,
   segData: null,
+  report: {
+    loaded: false,
+    findings: [],
+    text: "",
+  },
   dims: [0, 0, 0],
   slices: { axial: 0, coronal: 0, sagittal: 0 },
   flips: cloneDefaultFlips(),
@@ -171,34 +186,115 @@ function renderReportText(text, findings) {
 
 function renderFindings(findings) {
   elements.findingsList.innerHTML = "";
-  if (!findings.length) {
-    const empty = document.createElement("div");
-    empty.className = "finding-empty";
-    empty.textContent = "No rule-based flags found";
-    elements.findingsList.append(empty);
-    return;
+  const groups = [
+    {
+      title: "Segmentation Highlights",
+      findings: buildSegmentationFindings(),
+      emptyText: "Load a segmentation mask to summarize primary and metastatic labels",
+    },
+    {
+      title: "Report Highlights",
+      findings,
+      emptyText: state.report.loaded ? "No rule-based report flags found" : "No report loaded",
+    },
+  ];
+
+  for (const group of groups) {
+    const title = document.createElement("div");
+    title.className = "finding-group-title";
+    title.textContent = group.title;
+    elements.findingsList.append(title);
+
+    if (!group.findings.length) {
+      const empty = document.createElement("div");
+      empty.className = "finding-empty";
+      empty.textContent = group.emptyText;
+      elements.findingsList.append(empty);
+      continue;
+    }
+
+    for (const finding of group.findings) {
+      const item = document.createElement("div");
+      item.className = `finding-item ${finding.severity}`;
+
+      const header = document.createElement("div");
+      header.className = "finding-header";
+
+      const term = document.createElement("strong");
+      term.textContent = finding.term;
+
+      const meta = document.createElement("span");
+      meta.textContent = `${finding.severity} x ${finding.count}`;
+
+      const context = document.createElement("p");
+      context.textContent = finding.context || "";
+
+      header.append(term, meta);
+      item.append(header, context);
+      elements.findingsList.append(item);
+    }
+  }
+}
+
+function normalizeClassName(name) {
+  return String(name || "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .replace(/\b\w/g, (match) => match.toUpperCase());
+}
+
+function buildSegmentationFindings() {
+  if (!state.segMeta?.classes?.length) return [];
+
+  const classNames = state.segMeta.classes.map((item) => normalizeClassName(item.name));
+  const findings = [];
+  const hasPrimary = classNames.includes("Primary tumor");
+  const metastatic = classNames.filter((name) => METASTATIC_CLASS_NAMES.has(name));
+  const hasNodes = classNames.includes("Pathologic lymph nodes");
+
+  let profileContext = "";
+  if (hasPrimary && metastatic.length) {
+    profileContext = `Segmentation shows a primary tumor plus metastatic labels: ${metastatic.join(", ")}.`;
+  } else if (hasPrimary) {
+    profileContext = "Segmentation shows a primary tumor annotation without metastatic labels.";
+  } else if (metastatic.length) {
+    profileContext = `Segmentation shows metastatic labels without a primary tumor annotation: ${metastatic.join(", ")}.`;
+  } else if (hasNodes) {
+    profileContext = "Segmentation shows pathologic lymph node involvement without primary or metastatic tumor labels.";
   }
 
-  for (const finding of findings) {
-    const item = document.createElement("div");
-    item.className = `finding-item ${finding.severity}`;
-
-    const header = document.createElement("div");
-    header.className = "finding-header";
-
-    const term = document.createElement("strong");
-    term.textContent = finding.term;
-
-    const meta = document.createElement("span");
-    meta.textContent = `${finding.severity} x ${finding.count}`;
-
-    const context = document.createElement("p");
-    context.textContent = finding.context || "";
-
-    header.append(term, meta);
-    item.append(header, context);
-    elements.findingsList.append(item);
+  if (profileContext) {
+    findings.push({
+      term: "Tumor profile",
+      severity: hasPrimary || metastatic.length ? "high" : "moderate",
+      count: Math.max(1, classNames.length),
+      context: profileContext,
+    });
   }
+
+  for (const className of classNames) {
+    let context = `Segmentation includes ${className.toLowerCase()} annotation.`;
+    if (className === "Primary tumor") {
+      context = "Segmentation includes a primary tumor annotation.";
+    } else if (className === "Pathologic lymph nodes") {
+      context = "Segmentation includes pathologic lymph node annotation.";
+    } else if (METASTATIC_CLASS_NAMES.has(className)) {
+      context = `Segmentation includes metastatic annotation for ${className.toLowerCase()}.`;
+    }
+
+    findings.push({
+      term: className,
+      severity: SEGMENTATION_SEVERITY[className] || "moderate",
+      count: 1,
+      context,
+    });
+  }
+
+  return findings;
+}
+
+function refreshFindingsPanel() {
+  renderFindings(state.report.findings);
 }
 
 function configureControls(meta) {
@@ -675,6 +771,7 @@ async function loadVolume() {
     state.classSettings.clear();
     elements.classControls.className = "empty-state";
     elements.classControls.textContent = "No mask loaded";
+    refreshFindingsPanel();
 
     configureControls(meta);
     setStatus("Transferring voxel buffer...");
@@ -711,6 +808,7 @@ async function loadSegmentation() {
     const segMeta = await postJson(`/api/volume/${state.volumeMeta.id}/segmentation`, { path });
     state.segMeta = segMeta;
     makeClassControls(segMeta);
+    refreshFindingsPanel();
 
     setStatus("Transferring mask buffer...");
     const buffer = await fetchArrayBuffer(`/api/volume/${state.volumeMeta.id}/segmentation/${segMeta.id}/data`);
@@ -739,8 +837,11 @@ async function loadReport() {
 
   try {
     const report = await postJson("/api/load-report", { path });
+    state.report.loaded = true;
+    state.report.findings = report.findings;
+    state.report.text = report.text;
     setReportStatus(`Loaded ${report.type.toUpperCase()} report`);
-    renderFindings(report.findings);
+    refreshFindingsPanel();
     renderReportText(report.text, report.findings);
   } catch (error) {
     setReportStatus(error.message, true);
@@ -812,6 +913,8 @@ function wireControls() {
     render3D();
   });
 }
+
+refreshFindingsPanel();
 
 function addWheelDepth(canvas, plane, slider) {
   canvas.addEventListener("wheel", (event) => {

@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>DICOM / NIfTI Web Viewer</title>
+    <title>RadView</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
@@ -12,8 +12,8 @@
         <div class="brand-block">
           <span class="signal-dot"></span>
           <div>
-            <h1>MedVolume Nexus</h1>
-            <p>DICOM and NIfTI inspection console</p>
+            <h1>RadView</h1>
+            <p>DICOM and segmentation review console</p>
           </div>
         </div>
 
@@ -61,18 +61,6 @@
                 <dd id="windowText">-</dd>
               </div>
             </dl>
-          </section>
-
-          <section class="control-panel report-panel">
-            <h2>Report</h2>
-            <label class="report-loader">
-              <span>Report path</span>
-              <input id="reportPath" spellcheck="false" placeholder="/path/to/report.pdf, .docx, .txt, .dcm" />
-            </label>
-            <button id="loadReportBtn" class="secondary-btn report-button">Load Report</button>
-            <div id="reportStatus" class="report-status">No report loaded</div>
-            <div id="findingsList" class="findings-list"></div>
-            <div id="reportContent" class="report-content">Report text will appear here.</div>
           </section>
 
           <section class="control-panel">
@@ -164,6 +152,20 @@
             <canvas id="threeCanvas"></canvas>
           </article>
         </section>
+
+        <aside class="report-rail">
+          <section class="control-panel report-panel">
+            <h2>Report</h2>
+            <label class="report-loader">
+              <span>Report path</span>
+              <input id="reportPath" spellcheck="false" placeholder="/path/to/report.pdf, .docx, .txt, .dcm" />
+            </label>
+            <button id="loadReportBtn" class="secondary-btn report-button">Load Report</button>
+            <div id="reportStatus" class="report-status">No report loaded</div>
+            <div id="findingsList" class="findings-list"></div>
+            <div id="reportContent" class="report-content">Report text will appear here.</div>
+          </section>
+        </aside>
       </section>
     </main>
 

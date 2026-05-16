@@ -212,7 +212,7 @@ h1 {
 .workspace {
   min-height: 0;
   display: grid;
-  grid-template-columns: 380px 1fr;
+  grid-template-columns: 360px minmax(0, 1fr) 360px;
 }
 
 .side-panel {
@@ -220,6 +220,16 @@ h1 {
   overflow: auto;
   padding: 16px;
   border-right: 1px solid var(--line);
+  background:
+    linear-gradient(180deg, rgba(14, 20, 27, 0.84), rgba(8, 10, 15, 0.78)),
+    rgba(10, 12, 17, 0.7);
+}
+
+.report-rail {
+  min-height: 0;
+  overflow: auto;
+  padding: 16px;
+  border-left: 1px solid var(--line);
   background:
     linear-gradient(180deg, rgba(14, 20, 27, 0.84), rgba(8, 10, 15, 0.78)),
     rgba(10, 12, 17, 0.7);
@@ -296,6 +306,12 @@ dd {
   margin-bottom: 10px;
 }
 
+.report-panel {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
 .report-status {
   color: var(--muted);
   font-size: 12px;
@@ -306,6 +322,15 @@ dd {
   display: grid;
   gap: 8px;
   margin-bottom: 12px;
+}
+
+.finding-group-title {
+  color: var(--muted-strong);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 750;
+  margin: 2px 0 4px;
 }
 
 .finding-empty {
@@ -363,7 +388,8 @@ dd {
 }
 
 .report-content {
-  max-height: 340px;
+  min-height: 260px;
+  flex: 1 1 auto;
   overflow: auto;
   border: 1px solid rgba(145, 231, 255, 0.13);
   border-radius: 6px;
@@ -611,6 +637,11 @@ canvas {
   .side-panel {
     border-right: 0;
     border-bottom: 1px solid var(--line);
+  }
+
+  .report-rail {
+    border-left: 0;
+    border-top: 1px solid var(--line);
   }
 
   .view-grid {

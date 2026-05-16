@@ -199,6 +199,38 @@ def _load_label_names(path: Path) -> Dict[int, str]:
     return names
 
 
+def _filename_label_hint(path: Path) -> str:
+    name = path.name
+    if name.lower().endswith(".nii.gz"):
+        name = name[:-7]
+    else:
+        name = path.stem
+
+    cleaned = re.sub(r"[_\-\.]+", " ", name)
+    cleaned = re.sub(r"\b(mask|seg|segmentation|label|labels|overlay|multilabel|dense)\b", " ", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return _display_label_name(cleaned)
+
+
+def _apply_filename_label_fallback(path: Path, labels: List[int], label_names: Dict[int, str]) -> Dict[int, str]:
+    hinted_name = _filename_label_hint(path)
+    if not hinted_name:
+        return label_names
+
+    updated = dict(label_names)
+
+    if len(labels) == 1:
+        updated[labels[0]] = hinted_name
+        return updated
+
+    lower_hint = hinted_name.lower()
+    for label_id, default_name in DEFAULT_LABEL_NAMES.items():
+        if default_name.lower() in lower_hint and label_id in labels:
+            updated[label_id] = default_name
+
+    return updated
+
+
 def _read_text_file(path: Path) -> str:
     raw = path.read_bytes()
     for encoding in ("utf-8-sig", "utf-16", "latin-1"):
@@ -683,8 +715,8 @@ def load_segmentation(volume_id: str):
         if mask.shape != volume.data.shape:
             raise ValueError(f"Mask shape {mask.shape} does not match volume shape {volume.data.shape}.")
 
-        label_names = _load_label_names(path)
         labels = [int(v) for v in np.unique(mask) if int(v) != 0]
+        label_names = _apply_filename_label_fallback(path, labels, _load_label_names(path))
         classes = [
             {
                 "label": label,
